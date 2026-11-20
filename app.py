@@ -54,7 +54,7 @@ st.markdown("""
   .c-pos{font-size:11px;font-weight:800}
   .c-pos.up{color:#0b7a3b}.c-pos.dn{color:#b42318}
   .c-badge{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums;padding:3px 9px;border-radius:8px;white-space:nowrap}
-  .c-name{font-size:11.5px;color:#6b7280;margin:2px 0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .c-name{font-size:12.5px;color:#4b5563;margin:3px 0 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600}
   .c-vals{display:flex;gap:14px;font-variant-numeric:tabular-nums;flex-wrap:wrap}
   .c-vals .k{font-size:10px;color:#9aa3b2;display:block;letter-spacing:.04em}
   .c-vals .v{font-size:14px;font-weight:700;color:#111827}

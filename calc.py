@@ -73,17 +73,66 @@ def aggregate(df: pd.DataFrame, n: int) -> pd.DataFrame:
     return out.sort_index()
 
 
-def _short_name(tk: yf.Ticker, fallback: str) -> str:
+NAME_CACHE: dict[str, str] = {}      # 同一プロセス内での銘柄名キャッシュ
+NAME_KEYS = ("shortName", "longName", "displayName")
+
+
+def _short_name(tk: yf.Ticker, fallback: str, meta: dict | None = None) -> str:
+    """shortName を確実に取る。優先順位:
+       0) メモリキャッシュ
+       1) history のレスポンス meta（＝足取得と同じリクエスト。追加通信なし・失敗しない）
+       2) quoteSummary（tk.get_info() / tk.info）
+       3) 銘柄コード
+    """
+    if fallback in NAME_CACHE:
+        return NAME_CACHE[fallback]
+
+    # 1) 足取得時の meta（最速・最も安定）
+    for src in (meta, getattr(tk, "history_metadata", None) or {}):
+        for k in NAME_KEYS:
+            v = (src or {}).get(k)
+            if v:
+                NAME_CACHE[fallback] = str(v)
+                return str(v)
+
+    # 2) quoteSummary 系
     for getter in ("get_info", "info"):
         try:
             info = getattr(tk, getter)
             info = info() if callable(info) else info
-            for k in ("shortName", "longName", "displayName"):
+            for k in NAME_KEYS:
                 if info.get(k):
+                    NAME_CACHE[fallback] = str(info[k])
                     return str(info[k])
         except Exception:
             continue
+
+    # 3) 予備（検索 API：指数や特殊銘柄向け）
+    try:
+        q = yf.Search(fallback, max_results=1, news_count=0).quotes
+        if q:
+            for k in NAME_KEYS + ("name",):
+                if q[0].get(k):
+                    NAME_CACHE[fallback] = str(q[0][k])
+                    return str(q[0][k])
+    except Exception:
+        pass
+
     return fallback
+
+
+def get_names(symbols: list[str], max_workers: int = 8) -> dict[str, str]:
+    """銘柄名だけを先にまとめて取得（UI の即時表示用）。"""
+    def one(s: str) -> tuple[str, str]:
+        if s in NAME_CACHE:
+            return s, NAME_CACHE[s]
+        try:
+            return s, _short_name(yf.Ticker(s), s)
+        except Exception:
+            return s, s
+
+    with ThreadPoolExecutor(max_workers=min(max_workers, max(1, len(symbols)))) as ex:
+        return dict(ex.map(one, symbols))
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +156,7 @@ def fetch_one(symbol: str, tf: str = "4H", ma_len: int = 60) -> dict:
         return rec
 
     df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+    meta = dict(getattr(tk, "history_metadata", None) or {})   # 足取得と同時に名前も取れる
     bars_tf = aggregate(df, info["hours"]) if tf == "4H" else df
     bars_tf = bars_tf.dropna(subset=["Close"])
     if bars_tf.empty:
@@ -137,7 +187,7 @@ def fetch_one(symbol: str, tf: str = "4H", ma_len: int = 60) -> dict:
     else:
         rec["note"] = f"MA{ma_len}算出に不足（{len(bars_tf)}本／必要{ma_len}本）"
 
-    rec["name"] = _short_name(tk, symbol)
+    rec["name"] = _short_name(tk, symbol, meta)
     return rec
 
 
@@ -245,7 +295,7 @@ ul.ng{margin:0 0 0 18px;padding:0;line-height:1.8}
   td.pos{grid-area:pos;font-size:11px;font-weight:800}
   td.dev{grid-area:dev;justify-self:end;text-align:right}
   td.dev .badge{font-size:14px;min-width:0;padding:3px 9px;border-radius:8px}
-  td.name{grid-area:name;color:#6b7280;font-size:11px;
+  td.name{grid-area:name;color:#4b5563;font-size:11.5px;font-weight:600;
     overflow:hidden;text-overflow:ellipsis;min-width:0}
   td.px{grid-area:px}
   td.ma{grid-area:ma}
@@ -289,7 +339,7 @@ def build_html(recs: list[dict], tf: str = "4H", ma_len: int = 60) -> str:
         body = "".join(row(i, r) for i, r in enumerate(group, 1)) or \
                "<tr><td colspan='9' class='empty'>該当なし</td></tr>"
         return ("<table><thead><tr><th>#</th><th>コード</th><th>上/下</th><th>乖離率</th>"
-                f"<th>銘柄名</th><th>現在値</th><th>MA{ma_len}</th>"
+                f"<th>銘柄名 (shortName)</th><th>現在値</th><th>MA{ma_len}</th>"
                 "<th>本数</th><th>最終足</th></tr></thead><tbody>" + body + "</tbody></table>")
 
     ng_html = ""
